@@ -50,6 +50,12 @@ extract_power_by_block <- function(df_list, block_num) {
 # ----------------------------------------------------------------------
 
 table(df_list[[1]]["block_counter"])
+table(df_list[[1]]["phase"])
+
+test<-df_list[[1]]
+names(test )
+
+#compare blocks
 
 # Block 3  (original “first block”)
 power_list_first_block <- extract_power_by_block(df_list, 3)
@@ -90,8 +96,16 @@ sd(unlist(power_hippus_third_block))
 sd(unlist(power_hippus_fourth_block))
 
 
-psych::describe(unlist(power_hippus_fourth_block))
+# compare baseline blocks
+power_list_first_baseline <- extract_power_by_block(df_list, 2)
+#power_list_second_baseline <- extract_power_by_block(df_list, 4)
+#power_list_third_baseline  <- extract_power_by_block(df_list, 6)
+#power_list_fourth_baseline <- extract_power_by_block(df_list, 9)
+#power_list_fifth_baseline <- extract_power_by_block(df_list, 11)
+power_list_sixth_baseline <- extract_power_by_block(df_list, 13)
 
-#TODO:
-#- how can i define a manipulaiton check and validity of hippus?
-#- check across many participants
+power_hippus_first_baseline<-sapply(power_list_first_baseline,function(x){x<-(x[1,4]+x[1,3])/x[1,1]})
+power_hippus_sixth_baseline<-sapply(power_list_sixth_baseline,function(x){x<-(x[1,4]+x[1,3])/x[1,1]})
+
+sd(unlist(power_hippus_first_baseline))
+sd(unlist(power_hippus_sixth_baseline))
