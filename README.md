@@ -20,16 +20,15 @@ pupil_oscillation/
 ├── code/
 │   ├── packages.R                         # Package installation and loading
 │   ├── 01_sample_data_from_raw.R         # Reads and merges ET & task data
-│   ├── 02_preprocessing.R                # Preprocessing pipeline (single subject demo)
-│   ├── fun_hippus_power.r                # Function for hippus power analysis
-│   ├── compare_hippus_power.r            # Apply hippus power analysis across subjects
-│   └── exclude_size_outlier_rolling.R    # Custom size outlier detection function
+│   ├── 02_extract_hippus_power.r         # Apply hippus power analysis across subjects and blocks
+│   └── fun_hippus_power.r                # Function for hippus power analysis
 ├── data/
-│   ├── df_list_sample.rds
-│   ├── df_list_sample1.rds
-│   ├── df_list_sample2.rds
-│   └── df_list_sample3.rds
-└── README.md
+│   ├── df_list_sample.rds                # Sample data (seed 123)
+│   ├── df_list_sample1.rds               # Sample data (seed 111, n=30)
+│   ├── df_list_sample2.rds               # Sample data (seed 666)
+│   └── df_list_sample3.rds               # Sample data (seed 444)
+├── README.md
+└── Rplots.pdf                            # Generated plots
 ```
 
 ## Dependencies
@@ -44,6 +43,7 @@ The project requires the following R packages:
 - `remotes` - For installing packages from GitHub
 - `plyr`, `dplyr` - For data manipulation
 - `pbapply` - For progress bar in apply functions
+- `psych` - For descriptive statistics
 
 ### GitHub Packages
 - `PupilPreprocess` (from `nicobast/PupilPreprocess`) - Custom pupil preprocessing package
@@ -70,20 +70,9 @@ This script:
 
 **Key Parameters:**
 - `number_of_files = 30` - Number of subjects to sample
-- Random seed for reproducibility
+- Random seed for reproducibility (111 for df_list_sample1.rds)
 
-### 2. Preprocessing Pipeline (`02_preprocessing.R`)
-
-This script demonstrates the preprocessing steps for a single subject:
-
-1. **Invalid Value Exclusion** - Removes negative pupil diameters and other invalid values
-2. **Blink Correction** - Detects and corrects blink artifacts
-3. **Speed Outlier Exclusion** - Removes samples with unrealistic velocity changes
-4. **Size Outlier Exclusion** - Removes samples with unrealistic size values (using rolling median)
-5. **Savitzky-Golay Filtering** - Smooths the signal (p=3, n=21)
-6. **Low-pass Butterworth Filter** - Removes high-frequency noise (cutoff at 10 Hz, 4th order)
-
-### 3. Frequency Analysis (`fun_hippus_power.r`)
+### 2. Frequency Analysis (`fun_hippus_power.r`)
 
 The `func_hippus_power()` function:
 - Applies the full preprocessing pipeline to pupil data
@@ -94,14 +83,14 @@ The `func_hippus_power()` function:
   - **Noise**: 0 to `frequency_noise_threshold` Hz
   - **Low Power**: `frequency_noise_threshold` to 0.04 Hz
   - **Mid Power**: 0.04 to 0.15 Hz
-  - **High Power**: 0.15 to 0.4 Hz
+  - **High Power**: >0.15Hz up to 10Hz
 - Returns a data frame with power metrics for each chunk plus average
 
 **Frequency Bands:**
 - Hippus oscillations typically occur in the 0.05-0.4 Hz range
 - Signal-to-noise ratio is calculated as: `(high_power + mid_power) / noise`
 
-### 4. Comparison Across Blocks (`compare_hippus_power.r`)
+### 3. Comparison Across Blocks (`02_extract_hippus_power.r`)
 
 This script:
 - Loads multiple subjects from RDS files
@@ -109,6 +98,9 @@ This script:
 - Blocks analyzed: 3, 5, 10, 12
 - Computes hippus power (SNR) for each block
 - Aggregates results for comparison across conditions
+- Calculates descriptive statistics (mean, SD) for each block using `psych::describe()`
+
+**Utility Function:** `extract_power_by_block()` - Runs `func_hippus_power` for a selected block across all participants
 
 ## Usage
 
@@ -118,31 +110,34 @@ This script:
 # Load packages
 source("code/packages.R")
 
-# Option 1: Sample new data from raw files
+# Option 1: Sample new data from raw files (requires access to network paths)
 source("code/01_sample_data_from_raw.R")
 
 # Option 2: Use existing sample data
 df_list <- readRDS("data/df_list_sample1.rds")
 
-# Analyze a single subject (example from second block)
+# Analyze a single subject (example from block 3)
 source("code/fun_hippus_power.r")
 data <- df_list[[1]]
-data_block <- data[data$block == 3, ]
+data_block <- data[data$block_counter == 3, ]
 power_results <- func_hippus_power(data_block)
 print(power_results)
 ```
 
-### Batch Analysis Across Subjects
+### Batch Analysis Across Subjects and Blocks
 
 ```r
 # Run analysis across all subjects and blocks
-source("code/compare_hippus_power.r")
+source("code/02_extract_hippus_power.r")
 
 # Results are stored in:
-# - power_hippus_first_block
-# - power_hippus_second_block
-# - power_hippus_third_block
-# - power_hippus_fourth_block
+# - power_hippus_first_block    (block 3)
+# - power_hippus_second_block   (block 5)
+# - power_hippus_third_block    (block 10)
+# - power_hippus_fourth_block   (block 12)
+
+# Calculate descriptive statistics
+psych::describe(unlist(power_hippus_fourth_block))
 ```
 
 ## Key Features
@@ -157,20 +152,58 @@ source("code/compare_hippus_power.r")
 - **Chunk-based Analysis**: Splits signals into segments for better frequency resolution
 - **FFT-based PSD**: Computes power spectrum using Fast Fourier Transform
 - **Multi-band Power**: Calculates relative power across different frequency ranges
+- **Signal-to-Noise Ratio**: Compares mid+high frequency power to noise
 
 ### Custom Functions
-- `exclude_size_outlier_rolling()` - Two-pass rolling median outlier detection
 - `func_hippus_power()` - Complete preprocessing and frequency analysis pipeline
+- `extract_power_by_block()` - Batch processing utility for analyzing multiple subjects by block
+
+### Data Processing Features
+- **Progress Monitoring**: Real-time progress tracking during data loading and analysis
+- **Error Handling**: Robust error handling for HDF5 file reading
+- **Memory Efficiency**: Uses list-based processing for large datasets
+- **Reproducibility**: Random seeds for consistent data sampling
 
 ## Data Format
 
 ### Input Data
-- **Eye-tracking**: HDF5 files containing `BinocularEyeSampleEvent` with `logged_time`, `left_pupil_measure1`, `right_pupil_measure1`
-- **Task**: CSV files with trial information and timestamps
+- **Eye-tracking**: HDF5 files containing `BinocularEyeSampleEvent` with:
+  - `logged_time` - Timestamp for each eye-tracking sample
+  - `left_pupil_measure1` - Left pupil diameter
+  - `right_pupil_measure1` - Right pupil diameter
+- **Task**: CSV files with trial information including:
+  - `timestamp_exp` - Trial start timestamp
+  - `block_counter` - Block number
+  - Trial-level variables (`.thisRepN`, `.thisTrialN`, `stimulus_duration`, etc.)
 
 ### Output Data
 - **RDS Files**: List of data frames, one per subject, with merged ET and task data
-- **Power Metrics**: Data frame with relative power values for noise, low, mid, and high frequency bands
+- **Power Metrics**: Data frame with relative power values for:
+  - `noise` - Power in noise frequency band
+  - `low_power` - Power in low frequency band
+  - `mid_power` - Power in mid frequency band (0.04-0.15 Hz)
+  - `high_power` - Power in high frequency band (0.15-0.4 Hz)
+
+## Experimental Design
+
+The analysis is performed on data from an auditory oddball task (Studie_SEGA):
+- **Blocks Analyzed**: 3, 5, 10, 12
+- **Sample Size**: 30 subjects (for df_list_sample1.rds)
+- **Multiple Random Seeds**: 111, 123, 444, 666 for different sample subsets
+
+## Analysis Output
+
+The hippus power analysis outputs:
+1. **Individual Subject Results**: Power metrics for each chunk (2 chunks per subject)
+2. **Block-level Aggregates**: Hippus power (SNR) for each block
+3. **Descriptive Statistics**: Mean, SD, and other statistics across participants
+
+Example output includes:
+```r
+mean(unlist(power_hippus_first_block))   # Average SNR for block 3
+sd(unlist(power_hippus_first_block))     # SD of SNR for block 3
+psych::describe(unlist(power_hippus_fourth_block))  # Full descriptive stats
+```
 
 ## Author
 
@@ -180,14 +213,18 @@ Email: nbast@med.uni-frankfurt.de
 ## Notes
 
 - The project uses data from an auditory oddball task (Studie_SEGA)
+- Raw data paths are network-specific and may require VPN/access to the Frankfurt network
 - Sample data files are generated with different random seeds (111, 444, 666, 123)
+- df_list_sample1.rds uses seed 111 with n=30 subjects
 - Chunking strategy may need adjustment based on signal length and frequency resolution requirements
 - Frequency noise threshold is dynamically calculated based on chunk duration
+- Baseline trials (baseline_trial_counter == "6") include all data from trial start onward
 
 ## TODO
 
 - Define manipulation checks and validity metrics for hippus detection
 - Expand validation across more participants
 - Optimize chunking strategy for different signal lengths
-- Add automated quality control checksto benchmark a pupillary hippus/oscillation workflow
-
+- Add automated quality control checks
+- Document preprocessing parameters in more detail
+- Create visualization functions for power spectra

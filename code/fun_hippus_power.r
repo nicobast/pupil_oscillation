@@ -1,6 +1,52 @@
 #code/fun_hippus_power.r
 func_hippus_power<-function(data,signalname='left_pupil_measure1',timestampname='logged_time'){
 
+#description:
+#' Compute Hippus‑related pupil‑power metrics for a participant
+#'
+#' This high‑level wrapper runs the complete preprocessing‑and‑analysis
+#' pipeline on a single participant’s pupil‑diameter time‑series.
+#'
+#' **Main steps**  
+#' 1. **Extract raw data** – selects the pupil signal (`signalname`) and its
+#'    timestamps (`timestampname`).  
+#' 2. **Pre‑processing** – removes invalid values, corrects blinks,
+#'    excludes speed and size outliers, and smooths the signal with a
+#'    Savitzky‑Golay filter. NA‑percentages are reported after each step.  
+#' 3. **Resampling** – builds a regular time vector (linear interpolation) and
+#'    applies a zero‑phase low‑pass Butterworth filter while minimizing edge
+#'    artifacts.  
+#' 4. **Chunking** – splits the filtered signal into two equal‑length chunks
+#'    (or a smaller last chunk) and discards chunks shorter than 1000 samples.  
+#' 5. **Detrending & normalization** – removes the mean of each chunk and
+#'    scales it to zero mean & unit variance. All chunks are truncated to the
+#'    length of the shortest chunk so that FFTs have identical lengths.  
+#' 6. **Frequency analysis** – computes the FFT of each chunk, converts it to a
+#'    power‑spectral density (PSD), and averages the PSD across chunks.  
+#' 7. **Power band extraction** – integrates the PSD over four frequency bands:  
+#'    *noise* (0 – `frequency_noise_threshold`), *low* (0.04 – 0.15 Hz),  
+#'    *mid* (0.15 – 0.4 Hz) and *high* (above 0.4 Hz). Relative power for each
+#'    band is returned.  
+#' 8. **Output** – a data frame whose first row contains the participant‑wide
+#'    average band powers and subsequent rows contain the per‑chunk band powers.
+#'
+#' @param data A data frame containing at least an `id` column, the pupil
+#'   signal column (default `left_pupil_measure1`) and a timestamp column
+#'   (default `logged_time`).
+#' @param signalname Name of the column that holds the pupil‑diameter signal.
+#' @param timestampname Name of the column that holds the time stamps (in
+#'   the same units as the original recording).
+#' @return A data frame with columns `noise`, `low_power`, `mid_power`,
+#'   `high_power` (relative power values). The first row corresponds to the
+#'   participant‑wide average, and additional rows correspond to each chunk.
+#' @examples
+#' # Assuming `df` holds one participant’s data:
+#' power_df <- func_hippus_power(df)
+#' head(power_df)
+#'
+#' @export
+
+participant_id<-unique(data$id)
 signal<-data[[signalname]]
 timestamp<-data[[timestampname]]
 
@@ -30,13 +76,73 @@ signal <- PupilPreprocess::exclude_size_outlier(signal, timestamp)
 cat('after_exclude_size_outlier_NA_pct =', sprintf('%.4f%%', 100 * sum(is.na(signal)) / total_samples), '\n')
 
 # Smooth the signal with a Savitzky-Golay filter
-valid_idx <- which(!is.na(signal) & !is.na(timestamp))
-time_valid <- timestamp[valid_idx]
-signal_valid <- signal[valid_idx]
+# Helper to compute safe percentages (avoids NaN/Inf)
+calc_pct <- function(num, den) {
+  if (den == 0) return(0)
+  round(100 * num / den, 2)
+}
 
+# ---- NA‑percentage reporting (replace the original cat() calls) ----
+initial_NA_pct               <- calc_pct(sum(is.na(signal)), length(signal))
+cat('initial_NA_pct =', sprintf('%.4f%%', initial_NA_pct), '\n')
+
+signal <- PupilPreprocess::exclude_invalid(signal)
+after_exclude_invalid_NA_pct  <- calc_pct(sum(is.na(signal)), length(signal))
+cat('after_exclude_invalid_NA_pct =', sprintf('%.4f%%', after_exclude_invalid_NA_pct), '\n')
+
+signal <- PupilPreprocess::blink_correction(signal)
+after_blink_correction_NA_pct <- calc_pct(sum(is.na(signal)), length(signal))
+cat('after_blink_correction_NA_pct =', sprintf('%.4f%%', after_blink_correction_NA_pct), '\n')
+
+signal <- PupilPreprocess::exclude_speed_outlier(signal, timestamp)
+after_exclude_speed_outlier_NA_pct <- calc_pct(sum(is.na(signal)), length(signal))
+cat('after_exclude_speed_outlier_NA_pct =', sprintf('%.4f%%', after_exclude_speed_outlier_NA_pct), '\n')
+
+signal <- PupilPreprocess::exclude_size_outlier(signal, timestamp)
+after_exclude_size_outlier_NA_pct <- calc_pct(sum(is.na(signal)), length(signal))
+cat('after_exclude_size_outlier_NA_pct =', sprintf('%.4f%%', after_exclude_size_outlier_NA_pct), '\n')
+
+# -----------------------------------------------------------------
+#  Build valid vectors
+# -----------------------------------------------------------------
+valid_idx   <- which(!is.na(signal) & !is.na(timestamp))
+time_valid  <- timestamp[valid_idx]
+signal_valid<- signal[valid_idx]
+
+# ---- Early‑exit if nothing left after exclusions ----
+if (length(time_valid) == 0L) {
+  message(sprintf(
+    "Participant %s – no valid time points left after exclusions. Skipping.",
+    participant_id
+  ))
+  return(data.frame(
+    participant = participant_id,
+    power       = numeric(0),
+    hippus      = numeric(0)   # adjust column names as needed
+  ))
+}
+
+# -----------------------------------------------------------------
+#  Safe regular time vector (replaces the original seq call)
+# -----------------------------------------------------------------
 dt <- median(diff(time_valid))
-regular_time <- seq(from = time_valid[1], to = time_valid[length(time_valid)], by = dt)
-regular_signal <- approx(x = time_valid, y = signal_valid, xout = regular_time, method = "linear", rule = 2)$y
+seq_start <- time_valid[1L]
+seq_end   <- time_valid[length(time_valid)]
+
+if (any(is.na(c(seq_start, seq_end))) || any(is.infinite(c(seq_start, seq_end)))) {
+  warning(sprintf(
+    "Participant %s – time bounds contain NA/Inf. Skipping.",
+    participant_id
+  ))
+  return(data.frame())
+}
+
+regular_time   <- seq(from = seq_start, to = seq_end, by = dt)
+regular_signal <- approx(x = time_valid,
+                         y = signal_valid,
+                         xout = regular_time,
+                         method = "linear",
+                         rule = 2)$y
 smoothed_signal <- sgolayfilt(regular_signal, p = 3, n = 21)
 cat('after_sgolay_filter_NA_pct =', sprintf('%.4f%%', 100 * sum(is.na(smoothed_signal)) / total_samples), '\n')
 
@@ -160,7 +266,7 @@ fun_pupilpower<-function(data,frequencies){
 noise <- sum(data[frequencies >= 0 & frequencies <= frequency_noise_threshold])
 low_power <- sum(data[frequencies > frequency_noise_threshold & frequencies <= 0.04])
 mid_power <- sum(data[frequencies > 0.04 & frequencies <= 0.15])
-high_power <- sum(data[frequencies > 0.15 & frequencies <= 0.4])
+high_power <- sum(data[frequencies > 0.15])
 
 # Relative power in each band
 total_power <- sum(data)
