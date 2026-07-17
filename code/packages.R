@@ -3,24 +3,60 @@
 # Toggle whether missing packages should be installed automatically
 INSTALL_MISSING <- TRUE
 
-pkgs <- c("signal", "tuneR", "seewave", "zoo", "remotes", "PupilPreprocess")
+# Define packages by source
+cran_pkgs <- c("signal", "tuneR", "seewave", "zoo", "remotes")
+github_pkgs <- list("PupilPreprocess" = "nicobast/PupilPreprocess")
+bioc_pkgs <- c("rhdf5")
 
-install_if_missing <- function(pkgs){
+# All packages list for loading
+all_pkgs <- c(cran_pkgs, names(github_pkgs), bioc_pkgs)
+
+# Function to install missing packages
+install_if_missing <- function(pkgs, source = "cran", github_info = NULL) {
   missing <- pkgs[!pkgs %in% installed.packages()[, "Package"]]
-  if(length(missing) && INSTALL_MISSING){
-    install.packages(missing)
+  
+  if (length(missing) && INSTALL_MISSING) {
+    if (source == "cran") {
+      message("Installing CRAN packages: ", paste(missing, collapse = ", "))
+      install.packages(missing)
+    } else if (source == "github") {
+      message("Installing GitHub packages: ", paste(missing, collapse = ", "))
+      for (pkg in missing) {
+        if (!is.null(github_info) && pkg %in% names(github_info)) {
+          remotes::install_github(github_info[[pkg]])
+        }
+      }
+    } else if (source == "bioc") {
+      message("Installing Bioconductor packages: ", paste(missing, collapse = ", "))
+      if (!requireNamespace("BiocManager", quietly = TRUE)) {
+        install.packages("BiocManager")
+      }
+      BiocManager::install(missing)
+    }
   }
 }
 
-# Install CRAN packages (exclude github-only package)
-cran_pkgs <- setdiff(pkgs, "PupilPreprocess")
-install_if_missing(cran_pkgs)
+# Install CRAN packages
+install_if_missing(cran_pkgs, source = "cran")
 
-# Install/load github package
-if(!("PupilPreprocess" %in% installed.packages()[, "Package"])){
-  if(INSTALL_MISSING) remotes::install_github("nicobast/PupilPreprocess")
+# Install GitHub packages
+if (length(github_pkgs) > 0) {
+  install_if_missing(names(github_pkgs), source = "github", github_info = github_pkgs)
 }
+
+# Install Bioconductor packages
+if (length(bioc_pkgs) > 0) {
+  install_if_missing(bioc_pkgs, source = "bioc")
+}
+
 # Load all packages
-invisible(lapply(pkgs, function(p) {
-  suppressPackageStartupMessages(require(p, character.only = TRUE))
+message("Loading packages...")
+invisible(lapply(all_pkgs, function(p) {
+  if (p %in% installed.packages()[, "Package"]) {
+    suppressPackageStartupMessages(require(p, character.only = TRUE))
+    message("  - Loaded: ", p)
+  } else {
+    warning("  - Package not available: ", p)
+  }
 }))
+message("Package installation and loading complete.")

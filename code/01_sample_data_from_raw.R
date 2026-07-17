@@ -1,19 +1,12 @@
 # ===========================================================
-# Script purpose: Read raw data from the ET and task data folder, merge them and save a sample of 5 subjects to the data folder
+# Script purpose: Read raw data from the ET and task data folder, merge them and save a sample of X subjects into a new file.
 # Author: Nico Bast
 # Date Created: `r paste(Sys.Date())`
 # Email: nbast@med.uni-frankfurt.de
 # ===========================================================
 
 ## SETUP ####
-
-#required packages
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-if (!requireNamespace("rhdf5", quietly = TRUE))
-  BiocManager::install("rhdf5")
-library(rhdf5, warn.conflicts = FALSE) # read hdf files
-library(pbapply) # progress bar for lapply
+source("code/packages.R") #loads required packages
 
 #paths
 pupil_path <- "\\\\192.168.88.212\\daten\\KJP_Studien\\Studie_SEGA\\5_Versuchsdaten\\ET-Daten\\Auditory Oddball"
@@ -30,24 +23,34 @@ data_files_et <- list.files(
 
 # use function: extracts subject ID for file naming
 extract_ids <- function(filename) {
+  filename<-gsub(" ","_", filename)
   match <- regmatches(basename(filename),
-                      regexpr("[0-9]{1,3}_",
+                      regexpr("_[0-9]{1,3}_",
                               basename(filename)))
   gsub("_", "", match)}
 
 
 # read sample data
-set.seed(444)  # For reproducible results
-selected_files <- sample(data_files_et, size = min(5, length(data_files_et)), replace = FALSE)
+#set.seed(444)  # For reproducible results
+set.seed(111)  # For reproducible results
+number_of_files<-30
+selected_files <- sample(data_files_et, size = min(number_of_files, length(data_files_et)), replace = FALSE)
 
+#print selected files
+print('select files:')
+substr(selected_files,90,nchar(selected_files))
 
 #create empty list and assign names to the list based on the extracted IDs
 list_et_data <- vector("list", length(selected_files))
 names(list_et_data) <- sapply(selected_files, extract_ids)
     
 # read data from hdf5 files and store in a list, with error handling for files that can't be read
+start_time <- Sys.time()
 for (i in seq_along(selected_files)) {
-  cat("Now reading:", selected_files[i], "\n")
+  #monitoring progress and print output
+  elapsed_time <- difftime(Sys.time(), start_time, units = "mins")
+  cat(sprintf("Now reading: %s (Iteration %d of %d, Elapsed time: %.2f minutes)\n",
+              selected_files[i], i, length(selected_files), as.numeric(elapsed_time)))
   # Error handling in case some files still can't be read
   tryCatch({
     list_et_data[[i]] <- h5read(
@@ -69,6 +72,8 @@ cols_to_keep_et <- c("logged_time",
 list_et_data <- lapply(list_et_data, function(df) {
   df[ , intersect(cols_to_keep_et, names(df)), drop = FALSE]
 })
+
+summary(list_et_data)
 
 ## READ TASK DATA ####
 data_files_task <- list.files(path = task_data_path, pattern = "\\.csv$",
@@ -106,6 +111,8 @@ task_names <- names(list_task_data)
 common_names <- intersect(et_names, task_names)
 et_only <- setdiff(et_names, task_names)
 task_only <- setdiff(task_names, et_names)
+
+#remove subjects that are not present in both data sets
 if (length(et_only) > 0) {
   cat("REMOVED THE FOLLOWING SUBJECTS FROM LIST_ET_DATA:\n")
   cat(paste0("  - ", et_only), sep = "\n")
@@ -125,7 +132,8 @@ fun_merge_all_ids <- function(et_data, trial_data) {
   start_ts <- trial_data$timestamp_exp # trial start
   end_ts <- c(trial_data$timestamp_exp[-1], NA) # trial end
   et_ts <- et_data$logged_time
-  split_trial_data <- split(trial_data, seq(nrow(trial_data)))
+  #split_trial_data <- split(trial_data, seq(nrow(trial_data)))
+  split_trial_data <- split(trial_data, seq_len(nrow(trial_data)))
 
   fun_merge_data <- function(ts_1, ts_2, trial_data_splitted) {
     matched_time <- which(et_ts >= ts_1 & et_ts < ts_2)
@@ -155,7 +163,10 @@ df_list <- pbmapply(
   et_data = list_et_data,
   trial_data = list_task_data, SIMPLIFY = FALSE)
 
+length(df_list)
+
 #save sample data
 #saveRDS(df_list, file = "data/df_list_sample.rds") #seed 123
 #saveRDS(df_list, file = "data/df_list_sample2.rds") #seed 666
-saveRDS(df_list, file = "data/df_list_sample3.rds") #seed 444
+#saveRDS(df_list, file = "data/df_list_sample3.rds") #seed 444
+saveRDS(df_list, file = "data/df_list_sample1.rds") #seed 111 #n=30
